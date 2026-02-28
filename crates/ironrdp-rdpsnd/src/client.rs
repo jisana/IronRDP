@@ -103,13 +103,23 @@ impl Rdpsnd {
             .formats
             .iter()
             .collect();
-        let formats: HashSet<_> = self.handler.get_formats().iter().collect();
-        let formats = formats.intersection(&server_format).map(|&x| x.clone()).collect();
+        let client_formats_set: HashSet<_> = self.handler.get_formats().iter().collect();
+        let negotiated_formats: Vec<_> = client_formats_set.intersection(&server_format).map(|&x| x.clone()).collect();
+
+        info!("Negotiated {} audio formats in common with server", negotiated_formats.len());
+        for (i, format) in negotiated_formats.iter().enumerate() {
+            info!("Negotiated format {}: {:?}", i, format);
+        }
+
+        if negotiated_formats.is_empty() {
+            warn!("No common audio formats found! Server offered: {:?}", server_format);
+            warn!("Client supports: {:?}", client_formats_set);
+        }
 
         let pdu = pdu::ClientAudioFormatPdu {
             version: self.version()?,
             flags: self.handler.get_flags() | pdu::AudioFormatFlags::ALIVE,
-            formats,
+            formats: negotiated_formats,
             volume_left: 0xFFFF,
             volume_right: 0xFFFF,
             pitch: 0x00010000,
@@ -198,6 +208,12 @@ impl SvcProcessor for Rdpsnd {
                     pdu::ServerAudioOutputPdu::Wave2(pdu) => {
                         let format_no = usize::from(pdu.format_no);
                         let ts = pdu.audio_timestamp;
+                        self.handler.wave(format_no, ts, pdu.data);
+                        return Ok(self.wave_confirm(pdu.timestamp, pdu.block_no)?.into());
+                    }
+                    pdu::ServerAudioOutputPdu::Wave(pdu) => {
+                        let format_no = usize::from(pdu.format_no);
+                        let ts = u32::from(pdu.timestamp);
                         self.handler.wave(format_no, ts, pdu.data);
                         return Ok(self.wave_confirm(pdu.timestamp, pdu.block_no)?.into());
                     }

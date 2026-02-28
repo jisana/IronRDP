@@ -943,7 +943,6 @@ fn build_config(
         enable_server_pointer: false,
         autologon: false,
         enable_audio_playback: true,
-        no_audio_playback: !enable_audio,
         request_data: None,
         pointer_software_rendering: false,
         multitransport_flags: None,

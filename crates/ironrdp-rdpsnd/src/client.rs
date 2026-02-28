@@ -59,6 +59,9 @@ pub struct Rdpsnd {
     handler: Box<dyn RdpsndClientHandler>,
     state: RdpsndState,
     server_format: Option<ServerAudioFormatPdu>,
+    /// The negotiated format list sent to the server in the Client Audio Formats PDU.
+    /// The server's `format_no` in Wave/Wave2 PDUs references indices in this list.
+    negotiated_formats: Vec<AudioFormat>,
 }
 
 impl Rdpsnd {
@@ -69,6 +72,7 @@ impl Rdpsnd {
             handler,
             state: RdpsndState::Start,
             server_format: None,
+            negotiated_formats: Vec::new(),
         }
     }
 
@@ -116,6 +120,10 @@ impl Rdpsnd {
             warn!("Client supports: {:?}", client_formats_set);
         }
 
+        // Store the negotiated formats so we can resolve format_no from Wave/Wave2 PDUs.
+        // The server's format_no references indices in this negotiated list.
+        self.negotiated_formats = negotiated_formats.clone();
+
         let pdu = pdu::ClientAudioFormatPdu {
             version: self.version()?,
             flags: self.handler.get_flags() | pdu::AudioFormatFlags::ALIVE,
@@ -159,6 +167,39 @@ impl Rdpsnd {
             pdu,
         )
         .into()]))
+    }
+
+    /// Resolve the server's format_no (index into the negotiated format list) to the
+    /// corresponding index in the handler's supported format list.
+    ///
+    /// The server sends format_no as an index into the negotiated formats that the client
+    /// sent in the Client Audio Formats PDU. We need to find the matching format in the
+    /// handler's supported formats list so it can decode the audio data correctly.
+    fn resolve_handler_format_no(&self, server_format_no: usize) -> usize {
+        // Look up the actual format from the negotiated list
+        if let Some(negotiated_format) = self.negotiated_formats.get(server_format_no) {
+            // Find the index of this format in the handler's supported formats
+            if let Some(handler_idx) = self
+                .handler
+                .get_formats()
+                .iter()
+                .position(|f| f == negotiated_format)
+            {
+                return handler_idx;
+            }
+            warn!(
+                "Negotiated format {:?} not found in handler's supported formats, using server format_no {}",
+                negotiated_format, server_format_no
+            );
+        } else {
+            warn!(
+                "Server format_no {} out of range for negotiated formats (len={}), passing through",
+                server_format_no,
+                self.negotiated_formats.len()
+            );
+        }
+        // Fallback: pass through the server's format_no directly
+        server_format_no
     }
 }
 
@@ -206,15 +247,20 @@ impl SvcProcessor for Rdpsnd {
                 match pdu {
                     // TODO: handle WaveInfo for < v8
                     pdu::ServerAudioOutputPdu::Wave2(pdu) => {
-                        let format_no = usize::from(pdu.format_no);
+                        let server_format_no = usize::from(pdu.format_no);
+                        // Resolve the format_no from the negotiated list to the handler's format list.
+                        // The server's format_no is an index into the negotiated format list we sent.
+                        let handler_format_no = self.resolve_handler_format_no(server_format_no);
                         let ts = pdu.audio_timestamp;
-                        self.handler.wave(format_no, ts, pdu.data);
+                        self.handler.wave(handler_format_no, ts, pdu.data);
                         return Ok(self.wave_confirm(pdu.timestamp, pdu.block_no)?.into());
                     }
                     pdu::ServerAudioOutputPdu::Wave(pdu) => {
-                        let format_no = usize::from(pdu.format_no);
+                        let server_format_no = usize::from(pdu.format_no);
+                        // Resolve the format_no from the negotiated list to the handler's format list.
+                        let handler_format_no = self.resolve_handler_format_no(server_format_no);
                         let ts = u32::from(pdu.timestamp);
-                        self.handler.wave(format_no, ts, pdu.data);
+                        self.handler.wave(handler_format_no, ts, pdu.data);
                         return Ok(self.wave_confirm(pdu.timestamp, pdu.block_no)?.into());
                     }
                     pdu::ServerAudioOutputPdu::Volume(pdu) => {

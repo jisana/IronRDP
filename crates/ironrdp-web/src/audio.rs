@@ -341,22 +341,21 @@ impl WebAudioBackend {
             .map_err(|e| anyhow::Error::msg(format!("failed to create Web Audio buffer: {e:?}")))?;
 
         // Fill buffer channels with converted samples
+        // IMPORTANT: We must use copy_to_channel() to write data into the AudioBuffer.
+        // get_channel_data() in web-sys returns a COPY (Vec<f32>), not a reference to the
+        // underlying buffer, so modifying it would have no effect on the actual AudioBuffer.
         for channel in 0..final_channels {
-            let mut channel_data = buffer
-                .get_channel_data(channel.into())
-                .map_err(|e| anyhow::Error::msg(format!("Failed to get channel data: {e:?}")))?;
-
-            // Interleaved to channel data conversion
-            for (sample_idx, float_sample) in float_samples
+            // De-interleave: extract samples for this channel
+            let channel_data: Vec<f32> = float_samples
                 .iter()
                 .skip(channel as usize)
                 .step_by(final_channels as usize)
-                .enumerate()
-            {
-                if sample_idx < channel_data.len() {
-                    channel_data[sample_idx] = *float_sample;
-                }
-            }
+                .copied()
+                .collect();
+
+            buffer
+                .copy_to_channel(&channel_data, channel.into())
+                .map_err(|e| anyhow::Error::msg(format!("Failed to copy data to audio channel {channel}: {e:?}")))?;
         }
 
         Ok(buffer)

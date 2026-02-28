@@ -160,7 +160,7 @@ impl WebAudioBackend {
                 n_avg_bytes_per_sec: rate * 2 * 2,
                 n_block_align: 4,
                 bits_per_sample: 16,
-                data: Some(Vec::new()),
+                data: None,
             });
 
             // PCM 16-bit mono (fallback)
@@ -171,7 +171,7 @@ impl WebAudioBackend {
                 n_avg_bytes_per_sec: rate * 2,
                 n_block_align: 2,
                 bits_per_sample: 16,
-                data: Some(Vec::new()),
+                data: None,
             });
         }
 

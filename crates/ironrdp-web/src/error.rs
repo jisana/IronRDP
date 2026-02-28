@@ -7,6 +7,12 @@ pub(crate) struct IronError {
     rdcleanpath_details: Option<RDCleanPathDetails>,
 }
 
+impl core::fmt::Debug for IronError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("IronError").field("source", &self.source).finish()
+    }
+}
+
 impl IronError {
     pub(crate) fn with_kind(mut self, kind: IronErrorKind) -> Self {
         self.kind = kind;

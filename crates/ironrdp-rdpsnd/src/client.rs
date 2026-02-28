@@ -5,7 +5,7 @@ use ironrdp_core::{cast_length, impl_as_any, Decode as _, EncodeResult, ReadCurs
 use ironrdp_pdu::gcc::ChannelName;
 use ironrdp_pdu::{decode_err, encode_err, pdu_other_err, PduResult};
 use ironrdp_svc::{CompressionCondition, SvcClientProcessor, SvcMessage, SvcProcessor};
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 
 use crate::pdu::{self, AudioFormat, PitchPdu, ServerAudioFormatPdu, TrainingPdu, VolumePdu};
 use crate::server::RdpsndSvcMessages;

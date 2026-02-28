@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 use ironrdp_core::{cast_length, impl_as_any, Decode as _, EncodeResult, ReadCursor};
 use ironrdp_pdu::gcc::ChannelName;
@@ -98,26 +97,68 @@ impl Rdpsnd {
     }
 
     pub fn client_formats(&mut self) -> PduResult<RdpsndSvcMessages> {
-        // Windows seems to be confused if the client replies with more formats, or unknown formats (e.g.: opus).
-        // We ensure to only send supported formats in common with the server.
-        let server_format: HashSet<_> = self
+        // Negotiate audio formats: find formats supported by both client and server.
+        // We match on core audio properties (format tag, channels, sample rate, bits per sample)
+        // rather than using strict equality, because auxiliary fields like `data` (codec-specific
+        // extra bytes) or `n_avg_bytes_per_sec` may differ between client and server representations
+        // of the same logical format. Using HashSet::intersection with full struct equality would
+        // cause negotiation to fail silently when these auxiliary fields differ.
+        let server_formats = &self
             .server_format
             .as_ref()
             .ok_or_else(|| pdu_other_err!("invalid state - no server format"))?
-            .formats
-            .iter()
-            .collect();
-        let client_formats_set: HashSet<_> = self.handler.get_formats().iter().collect();
-        let negotiated_formats: Vec<_> = client_formats_set.intersection(&server_format).map(|&x| x.clone()).collect();
+            .formats;
+
+        let client_formats = self.handler.get_formats();
+
+        info!(
+            "Server offered {} audio formats, client supports {}",
+            server_formats.len(),
+            client_formats.len()
+        );
+        for (i, sf) in server_formats.iter().enumerate() {
+            debug!(
+                "Server format {}: {:?} {}Hz {}ch {}bps data={:?}",
+                i, sf.format, sf.n_samples_per_sec, sf.n_channels, sf.bits_per_sample,
+                sf.data.as_ref().map(|d| d.len())
+            );
+        }
+
+        // Match on core audio properties only
+        let mut negotiated_formats: Vec<AudioFormat> = Vec::new();
+        for client_fmt in client_formats {
+            for server_fmt in server_formats {
+                if client_fmt.format == server_fmt.format
+                    && client_fmt.n_channels == server_fmt.n_channels
+                    && client_fmt.n_samples_per_sec == server_fmt.n_samples_per_sec
+                    && client_fmt.bits_per_sample == server_fmt.bits_per_sample
+                {
+                    // Use the client's format representation (what our handler knows how to decode)
+                    if !negotiated_formats.iter().any(|f| {
+                        f.format == client_fmt.format
+                            && f.n_channels == client_fmt.n_channels
+                            && f.n_samples_per_sec == client_fmt.n_samples_per_sec
+                            && f.bits_per_sample == client_fmt.bits_per_sample
+                    }) {
+                        negotiated_formats.push(client_fmt.clone());
+                    }
+                    break;
+                }
+            }
+        }
 
         info!("Negotiated {} audio formats in common with server", negotiated_formats.len());
         for (i, format) in negotiated_formats.iter().enumerate() {
-            info!("Negotiated format {}: {:?}", i, format);
+            info!(
+                "Negotiated format {}: {:?} {}Hz {}ch {}bps",
+                i, format.format, format.n_samples_per_sec, format.n_channels, format.bits_per_sample
+            );
         }
 
         if negotiated_formats.is_empty() {
-            warn!("No common audio formats found! Server offered: {:?}", server_format);
-            warn!("Client supports: {:?}", client_formats_set);
+            warn!("No common audio formats found!");
+            warn!("Server offered: {:?}", server_formats);
+            warn!("Client supports: {:?}", client_formats);
         }
 
         // Store the negotiated formats so we can resolve format_no from Wave/Wave2 PDUs.
